@@ -11,47 +11,90 @@
 # ¡AJUSTA LA CONFIGURACIÓN network.host Y server.host EN PRODUCCIÓN!
 # -- FIN DE ADVERTENCIA --
 
+# Salir inmediatamente si un comando falla
+set -e
+
+# Opcional: Descomenta la siguiente línea para depurar el script (muestra los comandos ejecutados)
+# set -x
+
 echo "Iniciando la instalación del Stack ELK en Ubuntu Server 22.04 (Modo Prueba Minimalista y Automático)..."
+
+# --- Funciones de ayuda para esperar servicios ---
+
+# Función para esperar a que un servicio de systemd esté activo
+wait_for_service() {
+    local service_name=$1
+    local timeout=120
+    local count=0
+    echo "Esperando que el servicio $service_name esté activo..."
+    while ! sudo systemctl is-active --quiet "$service_name" && [ "$count" -lt "$timeout" ]; do
+        echo -n "."
+        sleep 1
+        count=$((count + 1))
+    done
+    echo "" # Nueva línea después de los puntos
+    if sudo systemctl is-active --quiet "$service_name"; then
+        echo "Servicio $service_name está activo."
+        return 0
+    else
+        echo "Error: El servicio $service_name no se inició en el tiempo esperado."
+        echo "Para más detalles, ejecuta: journalctl -xeu $service_name"
+        return 1
+    fi
+}
+
+# Función para esperar a que un puerto HTTP responda
+wait_for_http_port() {
+    local host=$1
+    local port=$2
+    local timeout=60
+    local count=0
+    echo "Esperando que $host:$port responda..."
+    while ! curl -s "http://$host:$port" > /dev/null && [ "$count" -lt "$timeout" ]; do
+        echo -n "."
+        sleep 1
+        count=$((count + 1))
+    done
+    echo "" # Nueva línea después de los puntos
+    if curl -s "http://$host:$port" > /dev/null; then
+        echo "$host:$port está respondiendo."
+        return 0
+    else
+        echo "Error: $host:$port no respondió en el tiempo esperado."
+        echo "Verifica que el servicio esté corriendo y el firewall no lo esté bloqueando."
+        return 1
+    fi
+}
+
+# --- Inicio de la instalación ---
 
 # 1. Actualizar el sistema
 echo -e "\n--- Paso 1: Actualizando el sistema ---"
-# DEBIAN_FRONTEND=noninteractive asegura que no haya prompts durante apt upgrade
 sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt upgrade -y
-if [ $? -ne 0 ]; then echo "Error al actualizar el sistema. Saliendo."; exit 1; fi
 echo "Sistema actualizado."
 
 # 2. Instalar OpenJDK 17 (requerido por Elasticsearch y Logstash)
 echo -e "\n--- Paso 2: Instalando OpenJDK 17 ---"
 sudo DEBIAN_FRONTEND=noninteractive apt install -y openjdk-17-jdk
-if [ $? -ne 0 ]; then echo "Error al instalar OpenJDK 17. Saliendo."; exit 1; fi
 echo "OpenJDK 17 instalado."
 java -version
 
 # 3. Importar la clave GPG de Elastic y añadir el repositorio de Elastic
 echo -e "\n--- Paso 3: Añadiendo el repositorio de Elastic ---"
-sudo DEBIAN_FRONTEND=noninteractive apt install -y apt-transport-https ca-certificates curl
-if [ $? -ne 0 ]; then echo "Error al instalar dependencias. Saliendo."; exit 1; fi
-
+sudo DEBIAN_FRONTEND=noninteractive apt install -y apt-transport-https ca-certificates curl gnupg2
 wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo gpg --dearmor -o /usr/share/keyrings/elastic-archive-keyring.gpg
-if [ $? -ne 0 ]; then echo "Error al descargar o procesar la clave GPG. Saliendo."; exit 1; fi
-
-echo "deb [signed-by=/usr/share/keyrings/elastic-archive-keyring.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" | sudo tee /etc/apt/sources.list.d/elastic-8.x.list
-if [ $? -ne 0 ]; then echo "Error al añadir el repositorio. Saliendo."; exit 1; fi
-
+echo "deb [signed-by=/usr/share/keyrings/elastic-archive-keyring.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" | sudo tee /etc/apt/sources.list.d/elastic-8.x.list > /dev/null
 sudo DEBIAN_FRONTEND=noninteractive apt update
-if [ $? -ne 0 ]; then echo "Error al actualizar apt después de añadir el repositorio. Saliendo."; exit 1; fi
 echo "Repositorio de Elastic añadido y apt actualizado."
 
 # --- INSTALACIÓN DE ELASTICSEARCH ---
 echo -e "\n--- Paso 4: Instalando Elasticsearch ---"
 sudo DEBIAN_FRONTEND=noninteractive apt install -y elasticsearch
-if [ $? -ne 0 ]; then echo "Error al instalar Elasticsearch. Saliendo."; exit 1; fi
 echo "Elasticsearch instalado."
 
 # Configurar Elasticsearch
 echo -e "\n--- Paso 5: Configurando Elasticsearch ---"
 # Aumentar los límites de memoria virtual (vm.max_map_count) para Elasticsearch
-# Esto es crucial para el funcionamiento de Elasticsearch.
 sudo sysctl -w vm.max_map_count=262144
 echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf > /dev/null
 sudo sysctl -p # Aplicar cambios permanentemente
@@ -69,9 +112,9 @@ sudo sed -i 's/^#cluster.initial_master_nodes: .*$/cluster.initial_master_nodes:
 HEAP_SIZE="2g" # Valor recomendado para prueba con 4GB de RAM
 
 echo "Configurando heap de Elasticsearch a -Xms${HEAP_SIZE} -Xmx${HEAP_SIZE}..."
-sudo sed -i "s|^-Xms[0-9]\+g|#-Xms${HEAP_SIZE}|" /etc/elasticsearch/jvm.options
-sudo sed -i "s|^-Xmx[0-9]\+g|#-Xmx${HEAP_SIZE}|" /etc/elasticsearch/jvm.options
-# Añadir la configuración al final del archivo si no está presente o para anular si se necesitan valores específicos
+# Comentar líneas existentes de Xms/Xmx si las hay y añadir las nuevas al final
+sudo sed -i "s/^-Xms[0-9]\+[mg MG]/#&/" /etc/elasticsearch/jvm.options
+sudo sed -i "s/^-Xmx[0-9]\+[mg MG]/#&/" /etc/elasticsearch/jvm.options
 sudo sh -c "echo '' >> /etc/elasticsearch/jvm.options"
 sudo sh -c "echo '-Xms${HEAP_SIZE}' >> /etc/elasticsearch/jvm.options"
 sudo sh -c "echo '-Xmx${HEAP_SIZE}' >> /etc/elasticsearch/jvm.options"
@@ -83,44 +126,30 @@ echo -e "\n--- Paso 6: Habilitando y iniciando Elasticsearch ---"
 sudo systemctl daemon-reload
 sudo systemctl enable elasticsearch
 sudo systemctl start elasticsearch
-if [ $? -ne 0 ]; then echo "Error al iniciar Elasticsearch. Saliendo."; exit 1; fi
-echo "Esperando que Elasticsearch se inicie... (esto puede tardar unos segundos)"
-sleep 30 # Dar tiempo a Elasticsearch para iniciar completamente
+wait_for_service elasticsearch || exit 1 # Esperar a que el servicio esté activo
+wait_for_http_port localhost 9200 || exit 1 # Esperar a que el puerto HTTP responda
 
 # --- VALIDACIÓN DE ELASTICSEARCH ---
 echo -e "\n--- Verificando la instalación de Elasticsearch ---"
 sudo systemctl status elasticsearch | grep "Active:"
-if [ $? -eq 0 ]; then echo "Elasticsearch está corriendo."; else echo "Error: Elasticsearch no está corriendo."; fi
 
-# Obtener la contraseña generada para el usuario 'elastic'
-ELASTIC_PASSWORD=$(sudo grep "password for the elastic user" /var/log/elasticsearch/elasticsearch.log | awk '{print $NF}' | tail -1) # Obtener la última
+# Resetear/Obtener la contraseña del usuario 'elastic' de forma robusta
+echo "Generando/Reseteando contraseña para el usuario 'elastic'..."
+ELASTIC_PASSWORD=$(sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -b)
 if [ -z "$ELASTIC_PASSWORD" ]; then
-    echo "¡ADVERTENCIA! No se encontró la contraseña de 'elastic' en los logs. Intentando generarla..."
-    # Si no se encontró la contraseña, intenta resetearla. Esto es común en sistemas con pocos logs.
-    ELASTIC_PASSWORD_RESET_OUTPUT=$(sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -b)
-    ELASTIC_PASSWORD=$(echo "$ELASTIC_PASSWORD_RESET_OUTPUT" | grep "password:" | awk '{print $NF}')
-    if [ -z "$ELASTIC_PASSWORD" ]; then
-        echo "Error crítico: No se pudo obtener/generar la contraseña de 'elastic'. Necesitará hacerlo manualmente."
-        echo "Comando: sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic"
-        exit 1
-    fi
-    echo "Contraseña de 'elastic' reseteada a: $ELASTIC_PASSWORD"
+    echo "Error crítico: No se pudo generar la contraseña de 'elastic'. Saliendo."
+    exit 1
 fi
-
 echo "La contraseña para el usuario 'elastic' es: $ELASTIC_PASSWORD"
 echo "¡GUARDA esta contraseña de forma segura! La necesitarás para Kibana y cualquier cliente."
 
-# Verificar accesibilidad y salud
+# Verificar accesibilidad y salud usando la contraseña recién obtenida
 curl -X GET "localhost:9200/" -u elastic:$ELASTIC_PASSWORD --insecure
-if [ $? -eq 0 ]; then echo "Elasticsearch es accesible localmente."; else echo "Error: Elasticsearch no es accesible localmente. Revise los logs."; fi
 curl -X GET "localhost:9200/_cat/health?v" -u elastic:$ELASTIC_PASSWORD --insecure
-if [ $? -eq 0 ]; then echo "Estado de salud de Elasticsearch verificado."; else echo "Error: No se pudo verificar el estado de salud de Elasticsearch."; fi
-
 
 # --- INSTALACIÓN DE KIBANA ---
 echo -e "\n--- Paso 7: Instalando Kibana ---"
 sudo DEBIAN_FRONTEND=noninteractive apt install -y kibana
-if [ $? -ne 0 ]; then echo "Error al instalar Kibana. Saliendo."; exit 1; fi
 echo "Kibana instalado."
 
 # Configurar Kibana
@@ -140,24 +169,17 @@ echo -e "\n--- Paso 9: Habilitando y iniciando Kibana ---"
 sudo systemctl daemon-reload
 sudo systemctl enable kibana
 sudo systemctl start kibana
-if [ $? -ne 0 ]; then echo "Error al iniciar Kibana. Saliendo."; exit 1; fi
-echo "Esperando que Kibana se inicie... (esto puede tardar unos segundos)"
-sleep 15 # Dar tiempo a Kibana para iniciar
+wait_for_service kibana || exit 1 # Esperar a que el servicio esté activo
+wait_for_http_port localhost 5601 || exit 1 # Esperar a que el puerto HTTP responda
 
 # --- VALIDACIÓN DE KIBANA ---
 echo -e "\n--- Verificando la instalación de Kibana ---"
 sudo systemctl status kibana | grep "Active:"
-if [ $? -eq 0 ]; then echo "Kibana está corriendo."; else echo "Error: Kibana no está corriendo."; fi
-
-# Verificar accesibilidad
-curl -X GET "localhost:5601/api/status"
-if [ $? -eq 0 ]; then echo "Kibana es accesible localmente."; else echo "Error: Kibana no es accesible localmente. Revise los logs."; fi
 echo "Deberías poder acceder a Kibana en http://TU_IP_DEL_SERVIDOR:5601"
 
 # --- INSTALACIÓN DE LOGSTASH ---
 echo -e "\n--- Paso 10: Instalando Logstash ---"
 sudo DEBIAN_FRONTEND=noninteractive apt install -y logstash
-if [ $? -ne 0 ]; then echo "Error al instalar Logstash. Saliendo."; exit 1; fi
 echo "Logstash instalado."
 
 # Configurar Logstash (ejemplo básico: leer de beats, enviar a Elasticsearch)
@@ -187,26 +209,23 @@ echo "Pipeline básico de Logstash configurado. Revise /etc/logstash/conf.d/ par
 # Habilitar y iniciar Logstash
 echo -e "\n--- Paso 12: Habilitando y iniciando Logstash ---"
 # Validar la configuración de Logstash antes de iniciar
+echo "Validando configuración de Logstash..."
 sudo /usr/share/logstash/bin/logstash --path.settings /etc/logstash -t
-if [ $? -ne 0 ]; then echo "Error: La configuración de Logstash es inválida. Revise /etc/logstash/conf.d/. Saliendo."; exit 1; fi
+echo "Configuración de Logstash válida."
 
 sudo systemctl daemon-reload
 sudo systemctl enable logstash
 sudo systemctl start logstash
-if [ $? -ne 0 ]; then echo "Error al iniciar Logstash. Saliendo."; exit 1; fi
-echo "Esperando que Logstash se inicie... (esto puede tardar más tiempo)"
-sleep 30 # Dar tiempo a Logstash para iniciar
+wait_for_service logstash || exit 1 # Esperar a que el servicio esté activo
 
 # --- VALIDACIÓN DE LOGSTASH ---
 echo -e "\n--- Verificando la instalación de Logstash ---"
 sudo systemctl status logstash | grep "Active:"
-if [ $? -eq 0 ]; then echo "Logstash está corriendo."; else echo "Error: Logstash no está corriendo. Revise /var/log/logstash/logstash-plain.log"; fi
 
 
 # --- INSTALACIÓN DE FILEBEAT (Recomendado para recolectar logs) ---
 echo -e "\n--- Paso 13: Instalando Filebeat ---"
 sudo DEBIAN_FRONTEND=noninteractive apt install -y filebeat
-if [ $? -ne 0 ]; then echo "Error al instalar Filebeat. Saliendo."; exit 1; fi
 echo "Filebeat instalado."
 
 # Configurar Filebeat para enviar logs al pipeline de Logstash
@@ -225,12 +244,12 @@ echo "Módulo 'system' de Filebeat habilitado."
 # Nota: Esto requiere que Kibana esté en funcionamiento y accesible.
 echo "Cargando dashboards de Kibana para Filebeat..."
 sudo filebeat setup --dashboards -E output.elasticsearch.username=elastic -E output.elasticsearch.password=$ELASTIC_PASSWORD -E output.elasticsearch.hosts=["localhost:9200"] -E output.elasticsearch.ssl.verification_mode=none
-if [ $? -ne 0 ]; then echo "Error al cargar dashboards de Filebeat. Revise la conexión a Kibana/Elasticsearch."; else echo "Dashboards de Filebeat cargados."; fi
+echo "Dashboards de Filebeat cargados."
 
 # Cargar el índice de Filebeat en Elasticsearch
 echo "Cargando índice de Filebeat en Elasticsearch..."
 sudo filebeat setup --index-management -E output.elasticsearch.username=elastic -E output.elasticsearch.password=$ELASTIC_PASSWORD -E output.elasticsearch.hosts=["localhost:9200"] -E output.elasticsearch.ssl.verification_mode=none
-if [ $? -ne 0 ]; then echo "Error al cargar el índice de Filebeat. Revise la conexión a Elasticsearch."; else echo "Índice de Filebeat cargado."; fi
+echo "Índice de Filebeat cargado."
 
 echo "Configuración básica de Filebeat aplicada. Revise /etc/filebeat/filebeat.yml para ajustes finos."
 
@@ -239,13 +258,11 @@ echo -e "\n--- Paso 15: Habilitando y iniciando Filebeat ---"
 sudo systemctl daemon-reload
 sudo systemctl enable filebeat
 sudo systemctl start filebeat
-if [ $? -ne 0 ]; then echo "Error al iniciar Filebeat. Saliendo."; exit 1; fi
-echo "Filebeat iniciado."
+wait_for_service filebeat || exit 1 # Esperar a que el servicio esté activo
 
 # --- VALIDACIÓN DE FILEBEAT ---
 echo -e "\n--- Verificando la instalación de Filebeat ---"
 sudo systemctl status filebeat | grep "Active:"
-if [ $? -eq 0 ]; then echo "Filebeat está corriendo."; else echo "Error: Filebeat no está corriendo. Revise /var/log/filebeat/filebeat"; fi
 
 
 echo -e "\n--- Instalación del Stack ELK (y Filebeat) completada ---"
