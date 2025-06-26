@@ -2,7 +2,7 @@
 
 # Este script instala el Stack ELK (Elasticsearch, Logstash, Kibana) en Ubuntu Server 22.04 LTS.
 # También instala Filebeat para la recolección de logs y OpenJDK 17.
-# Está configurado para un entorno de PRUEBA MINIMALISTA.
+# Está configurado para un entorno de PRUEBA MINIMALISTA y es COMPLETAMENTE AUTOMÁTICO.
 
 # -- ADVERTENCIA DE SEGURIDAD --
 # Este script configura Elasticsearch y Kibana para ser accesibles desde cualquier IP (0.0.0.0).
@@ -11,24 +11,25 @@
 # ¡AJUSTA LA CONFIGURACIÓN network.host Y server.host EN PRODUCCIÓN!
 # -- FIN DE ADVERTENCIA --
 
-echo "Iniciando la instalación del Stack ELK en Ubuntu Server 22.04 (Modo Prueba Minimalista)..."
+echo "Iniciando la instalación del Stack ELK en Ubuntu Server 22.04 (Modo Prueba Minimalista y Automático)..."
 
 # 1. Actualizar el sistema
 echo -e "\n--- Paso 1: Actualizando el sistema ---"
-sudo apt update && sudo apt upgrade -y
+# DEBIAN_FRONTEND=noninteractive asegura que no haya prompts durante apt upgrade
+sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt upgrade -y
 if [ $? -ne 0 ]; then echo "Error al actualizar el sistema. Saliendo."; exit 1; fi
 echo "Sistema actualizado."
 
 # 2. Instalar OpenJDK 17 (requerido por Elasticsearch y Logstash)
 echo -e "\n--- Paso 2: Instalando OpenJDK 17 ---"
-sudo apt install -y openjdk-17-jdk
+sudo DEBIAN_FRONTEND=noninteractive apt install -y openjdk-17-jdk
 if [ $? -ne 0 ]; then echo "Error al instalar OpenJDK 17. Saliendo."; exit 1; fi
 echo "OpenJDK 17 instalado."
 java -version
 
 # 3. Importar la clave GPG de Elastic y añadir el repositorio de Elastic
 echo -e "\n--- Paso 3: Añadiendo el repositorio de Elastic ---"
-sudo apt install -y apt-transport-https ca-certificates curl
+sudo DEBIAN_FRONTEND=noninteractive apt install -y apt-transport-https ca-certificates curl
 if [ $? -ne 0 ]; then echo "Error al instalar dependencias. Saliendo."; exit 1; fi
 
 wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo gpg --dearmor -o /usr/share/keyrings/elastic-archive-keyring.gpg
@@ -37,13 +38,13 @@ if [ $? -ne 0 ]; then echo "Error al descargar o procesar la clave GPG. Saliendo
 echo "deb [signed-by=/usr/share/keyrings/elastic-archive-keyring.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" | sudo tee /etc/apt/sources.list.d/elastic-8.x.list
 if [ $? -ne 0 ]; then echo "Error al añadir el repositorio. Saliendo."; exit 1; fi
 
-sudo apt update
+sudo DEBIAN_FRONTEND=noninteractive apt update
 if [ $? -ne 0 ]; then echo "Error al actualizar apt después de añadir el repositorio. Saliendo."; exit 1; fi
 echo "Repositorio de Elastic añadido y apt actualizado."
 
 # --- INSTALACIÓN DE ELASTICSEARCH ---
 echo -e "\n--- Paso 4: Instalando Elasticsearch ---"
-sudo apt install -y elasticsearch
+sudo DEBIAN_FRONTEND=noninteractive apt install -y elasticsearch
 if [ $? -ne 0 ]; then echo "Error al instalar Elasticsearch. Saliendo."; exit 1; fi
 echo "Elasticsearch instalado."
 
@@ -118,7 +119,7 @@ if [ $? -eq 0 ]; then echo "Estado de salud de Elasticsearch verificado."; else 
 
 # --- INSTALACIÓN DE KIBANA ---
 echo -e "\n--- Paso 7: Instalando Kibana ---"
-sudo apt install -y kibana
+sudo DEBIAN_FRONTEND=noninteractive apt install -y kibana
 if [ $? -ne 0 ]; then echo "Error al instalar Kibana. Saliendo."; exit 1; fi
 echo "Kibana instalado."
 
@@ -155,7 +156,7 @@ echo "Deberías poder acceder a Kibana en http://TU_IP_DEL_SERVIDOR:5601"
 
 # --- INSTALACIÓN DE LOGSTASH ---
 echo -e "\n--- Paso 10: Instalando Logstash ---"
-sudo apt install -y logstash
+sudo DEBIAN_FRONTEND=noninteractive apt install -y logstash
 if [ $? -ne 0 ]; then echo "Error al instalar Logstash. Saliendo."; exit 1; fi
 echo "Logstash instalado."
 
@@ -204,7 +205,7 @@ if [ $? -eq 0 ]; then echo "Logstash está corriendo."; else echo "Error: Logsta
 
 # --- INSTALACIÓN DE FILEBEAT (Recomendado para recolectar logs) ---
 echo -e "\n--- Paso 13: Instalando Filebeat ---"
-sudo apt install -y filebeat
+sudo DEBIAN_FRONTEND=noninteractive apt install -y filebeat
 if [ $? -ne 0 ]; then echo "Error al instalar Filebeat. Saliendo."; exit 1; fi
 echo "Filebeat instalado."
 
