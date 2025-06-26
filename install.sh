@@ -99,11 +99,19 @@ sudo sysctl -w vm.max_map_count=262144
 echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf > /dev/null
 sudo sysctl -p # Aplicar cambios permanentemente
 
-# Configurar network.host y otras opciones básicas
-sudo sed -i 's/^#network.host: .*$/network.host: 0.0.0.0/' /etc/elasticsearch/elasticsearch.yml
-sudo sed -i 's/^#http.port: 9200/http.port: 9200/' /etc/elasticsearch/elasticsearch.yml
-sudo sed -i 's/^#discovery.seed_hosts: .*$/discovery.seed_hosts: ["127.0.0.1"]/' /etc/elasticsearch/elasticsearch.yml
-sudo sed -i 's/^#cluster.initial_master_nodes: .*$/cluster.initial_master_nodes: ["$(hostname)"]/' /etc/elasticsearch/elasticsearch.yml
+# --- MODIFICACIÓN ROBUSTA DE elasticsearch.yml ---
+echo "Realizando configuración robusta de elasticsearch.yml..."
+# Eliminar líneas existentes para evitar duplicados
+sudo sed -i '/^network.host:/d' /etc/elasticsearch/elasticsearch.yml
+sudo sed -i '/^http.port:/d' /etc/elasticsearch/elasticsearch.yml
+sudo sed -i '/^discovery.seed_hosts:/d' /etc/elasticsearch/elasticsearch.yml
+sudo sed -i '/^cluster.initial_master_nodes:/d' /etc/elasticsearch/elasticsearch.yml
+
+# Añadir las configuraciones deseadas al final del archivo
+sudo sh -c 'echo "network.host: 0.0.0.0" >> /etc/elasticsearch/elasticsearch.yml'
+sudo sh -c 'echo "http.port: 9200" >> /etc/elasticsearch/elasticsearch.yml'
+sudo sh -c 'echo "discovery.seed_hosts: [\"127.0.0.1\"]" >> /etc/elasticsearch/elasticsearch.yml'
+sudo sh -c 'echo "cluster.initial_master_nodes: [\"$(hostname)\"]" >> /etc/elasticsearch/elasticsearch.yml'
 
 # Ajustar el tamaño del heap de Java para Elasticsearch
 # Para una prueba minimalista, asignamos 2GB (útil para sistemas con 4GB de RAM).
